@@ -24,4 +24,6 @@ libraryDependencies += "org.plotly-scala" %% "plotly-render" % "0.3.1" % Test
 
 libraryDependencies += "org.rauschig" % "jarchivelib" % "0.5.0" % Test
 
+libraryDependencies += "com.thoughtworks.feature" %% "mixins-implicitssingleton" % "2.1.0-M0" % Test
+
 scalacOptions += "-Ypartial-unification"

@@ -3,7 +3,7 @@ package plugins
 import com.thoughtworks.deeplearning.DeepLearning.Tape
 import com.thoughtworks.feature.ImplicitApply
 import com.thoughtworks.raii.asynchronous._
-import com.thoughtworks.raii.covariant.{Releasable, ResourceT}
+import com.thoughtworks.raii.covariant.{Resource, ResourceT}
 import org.nd4j.linalg.api.ndarray.INDArray
 import org.nd4j.linalg.factory.Nd4j
 import org.nd4s.Implicits._
@@ -36,7 +36,7 @@ trait CumulativeINDArrayLayers extends INDArrayLayers {
   trait INDArrayLayerApi extends super[INDArrayLayers].INDArrayLayerApi {
 
     private final class Accumulator(val data: INDArray, flushBackward: Do[INDArray] => UnitContinuation[Unit])
-        extends Releasable[UnitContinuation, Try[Accumulator]] {
+        extends Resource[UnitContinuation, Try[Accumulator]] {
       @volatile
       var currentDelta: INDArray = CumulativeINDArrayLayers.Zero
 
@@ -63,7 +63,7 @@ trait CumulativeINDArrayLayers extends INDArrayLayers {
     private lazy val sharedAccumulator = {
       val doAccumulator = super.forward.flatMap {
         case Tape(data, flushBackward) =>
-          Do(TryT(ResourceT(Continuation.delay[Unit, Releasable[UnitContinuation, Try[Accumulator]]] {
+          Do(TryT(ResourceT(Continuation.delay[Unit, Resource[UnitContinuation, Try[Accumulator]]] {
             new Accumulator(data, flushBackward)
           })))
       }
@@ -78,6 +78,7 @@ trait CumulativeINDArrayLayers extends INDArrayLayers {
       *          import org.nd4j.linalg.factory.Nd4j
       *          import com.thoughtworks.feature.Factory
       *          import com.thoughtworks.deeplearning.plugins._
+      *          import com.thoughtworks.feature.mixins.ImplicitsSingleton
       *          val hyperparameters = Factory[DoubleTraining with CumulativeINDArrayLayers with INDArrayWeights with ImplicitsSingleton with Operators].newInstance()
       *          import hyperparameters.implicits._
       *          val weight = hyperparameters.INDArrayWeight(Nd4j.ones(2, 3))
