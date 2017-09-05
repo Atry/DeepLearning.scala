@@ -1,15 +1,15 @@
 package com.thoughtworks.deeplearning.plugins
-import org.nd4j.linalg.api.ndarray.INDArray
-import org.nd4j.linalg.factory.Nd4j
-import org.nd4s.Implicits._
-
-import scala.collection.GenTraversable
-import scala.collection.generic.GenericTraversableTemplate
-import scala.collection.immutable.IndexedSeq
-import scala.reflect.ClassTag
-import scala.util.Random
 object Utils {
 
+  import org.nd4j.linalg.api.ndarray.INDArray
+  import org.nd4j.linalg.factory.Nd4j
+  import org.nd4s.Implicits._
+
+  import scala.collection.GenTraversable
+  import scala.collection.generic.GenericTraversableTemplate
+  import scala.collection.immutable.IndexedSeq
+  import scala.reflect.ClassTag
+  import scala.util.Random
   /**
     * 处理标签数据：将N行一列的NDArray转换为N行NumberOfClasses列的NDArray，每行对应的正确分类的值为1，其它列的值为0
     *

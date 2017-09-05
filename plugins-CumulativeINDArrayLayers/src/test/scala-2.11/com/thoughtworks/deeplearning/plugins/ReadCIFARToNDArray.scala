@@ -1,20 +1,19 @@
 package com.thoughtworks.deeplearning.plugins
 
-import java.io._
-import java.net.URL
-
-import sys.process._
-import org.nd4j.linalg.api.ndarray.INDArray
-import org.nd4s.Implicits._
-import org.rauschig.jarchivelib.{Archiver, ArchiverFactory}
-
-import scala.collection.immutable
-import scala.collection.immutable.IndexedSeq
-
 object ReadCIFARToNDArray {
 
-  val currentPath
-  : String = new java.io.File(".").getCanonicalPath + "/src/main/resources/"
+  import java.io._
+  import java.net.URL
+
+  import sys.process._
+  import org.nd4j.linalg.api.ndarray.INDArray
+  import org.nd4s.Implicits._
+  import org.rauschig.jarchivelib.{Archiver, ArchiverFactory}
+
+  import scala.collection.immutable
+  import scala.collection.immutable.IndexedSeq
+
+  val currentPath: String = new java.io.File(".").getCanonicalPath + "/src/main/resources/"
 
   /**
     * 原始文件字节
