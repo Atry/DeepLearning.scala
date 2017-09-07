@@ -34,6 +34,7 @@ import org.nd4j.linalg.factory.Nd4j
 import org.nd4j.linalg.api.ndarray.INDArray
 import org.nd4j.linalg.ops.transforms.Transforms
 import com.thoughtworks.feature.Factory
+import com.thoughtworks.feature.mixins.ImplicitsSingleton
 
 object CNNObject {
   trait CNNs extends INDArrayLayers with ImplicitsSingleton with Training with Operators {

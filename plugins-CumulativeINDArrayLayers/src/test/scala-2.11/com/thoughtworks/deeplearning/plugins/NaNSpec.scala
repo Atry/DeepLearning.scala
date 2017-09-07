@@ -26,11 +26,11 @@ import org.nd4j.linalg.api.ndarray.INDArray
 import com.thoughtworks.deeplearning.plugins.Operators._
 import com.thoughtworks.deeplearning.plugins.ReadCIFARToNDArray.{TestImageAndLabels, TrainData}
 import com.thoughtworks.feature.Factory
+import com.thoughtworks.feature.mixins.ImplicitsSingleton
 import org.joda.time.LocalTime
 
 import scala.language.postfixOps
 import scala.util.Random
-
 import plotly.Scatter
 import plotly.Plotly._
 import plotly._
