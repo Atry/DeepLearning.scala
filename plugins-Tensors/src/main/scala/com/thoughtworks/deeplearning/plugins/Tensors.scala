@@ -167,15 +167,15 @@ trait Tensors extends OpenCL with AllOpenCLExpressions {
     def force: SharedTensor
   }
 
-  trait Compiled extends MonadicCloseable[UnitContinuation] {
+  trait CompiledKernel extends MonadicCloseable[UnitContinuation] {
     def run(parameters: List[TensorUpvalue]): Do[PendingBuffer]
   }
 
-  protected def kernelCacheBuilder: CacheBuilder[StructuralKey, Compiled] = {
+  protected def kernelCacheBuilder: CacheBuilder[StructuralKey, CompiledKernel] = {
     CacheBuilder
       .newBuilder()
-      .removalListener(new RemovalListener[StructuralKey, Compiled] {
-        def onRemoval(notification: RemovalNotification[StructuralKey, Compiled]): Unit = {
+      .removalListener(new RemovalListener[StructuralKey, CompiledKernel] {
+        def onRemoval(notification: RemovalNotification[StructuralKey, CompiledKernel]): Unit = {
           val kernelProgram = notification.getValue
           // TODO: clean up the kernel
           // kernelProgram.close()
@@ -184,7 +184,7 @@ trait Tensors extends OpenCL with AllOpenCLExpressions {
       })
   }
 
-  protected val kernelCache: Cache[StructuralKey, Compiled] = kernelCacheBuilder.build()
+  protected val kernelCache: Cache[StructuralKey, CompiledKernel] = kernelCacheBuilder.build()
 
   override def monadicClose: UnitContinuation[Unit] = {
     UnitContinuation.delay {
@@ -208,13 +208,11 @@ trait Tensors extends OpenCL with AllOpenCLExpressions {
       } with SharedTensor
     }
 
-    // TODO: Cache the compiled OpenCL kernel
-    // TODO: When comparing
     def computationalGraph: Do[PendingBuffer] = {
-      val kernelProgram = kernelCache.get(
+      val compiledKernel = kernelCache.get(
         new StructuralKey(kernelTerm),
-        new Callable[Compiled] {
-          def call(): Compiled = {
+        new Callable[CompiledKernel] {
+          def call(): CompiledKernel = {
 
             val AlphaConversion(oldParameters, renamedParameters, convertedTerm) =
               kernelTerm.alphaConversion(Nil, Nil)
@@ -225,7 +223,7 @@ trait Tensors extends OpenCL with AllOpenCLExpressions {
             val program = createProgramWithSource(sourceCode)
             program.build()
 
-            new Compiled {
+            new CompiledKernel {
 
               def monadicClose: UnitContinuation[Unit] = program.monadicClose
 
@@ -261,7 +259,7 @@ trait Tensors extends OpenCL with AllOpenCLExpressions {
         }
       )
 
-      kernelProgram.run(kernelTerm.upvalues)
+      compiledKernel.run(kernelTerm.upvalues).shared
     }
   }
 
