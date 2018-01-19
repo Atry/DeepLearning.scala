@@ -15,6 +15,7 @@ import com.thoughtworks.tryt.covariant._
 import org.apache.commons.math3.linear._
 
 import scala.language.existentials
+import scalaz.std.list._
 import scalaz.syntax.all._
 import scala.util.Try
 
@@ -26,9 +27,13 @@ trait Tensors extends OpenCL with AllOpenCLExpressions {
                                                  convertedTerm: Root)
 
   sealed trait StructuralComparison
+
   object StructuralComparison {
+
     final case class Same(thisParameters: List[Term], thatParameters: List[Term]) extends StructuralComparison
+
     case object Different extends StructuralComparison
+
   }
 
   final case class StructuralHashCode(thisParameters: List[Term], code: Int)
@@ -106,16 +111,18 @@ trait Tensors extends OpenCL with AllOpenCLExpressions {
 
   type Expression <: ExpressionApi
 
-  protected trait TermApi extends super.TermApi with ExpressionApi { this: Term =>
-    def upvalues: Seq[Upvalue] = ???
+  protected trait TermApi extends super.TermApi with ExpressionApi {
+    this: Term =>
+    def upvalues: List[TensorUpvalue] = ???
+
     def alphaConversion(oldParameters: List[Term], renamedParameters: List[Term]): AlphaConversion[Self] = ???
   }
 
   type Term <: (Expression with Any) with TermApi
 
-  protected trait UpvalueApi extends TermApi { this: Upvalue =>
-
-    def bindUpvalue(kernel: Kernel, argumentIndex: Int): Unit
+  protected trait TensorUpvalueApi extends TermApi {
+    this: TensorUpvalue =>
+    val tensor: Tensor
 
     override def alphaConversion(oldParameters: List[Term], renamedParameters: List[Term]): AlphaConversion[Self] = {
       oldParameters.indexOf(this) match {
@@ -126,53 +133,42 @@ trait Tensors extends OpenCL with AllOpenCLExpressions {
           val renamedParameter = renamedParameters(index).asInstanceOf[Self]
           AlphaConversion[Self](oldParameters, renamedParameters, renamedParameter)
       }
-
     }
   }
 
-  type Upvalue <: (Term with Any) with UpvalueApi
+  type TensorUpvalue <: (Term with Any) with TensorUpvalueApi
 
-  protected trait TensorUpvalueApi extends UpvalueApi { this: TensorUpvalue =>
-    val tensor: Tensor
-    def bindUpvalue(kernel: Kernel, argumentIndex: Int): Unit = ???
-  }
-  type TensorUpvalue <: (Upvalue with Any) with TensorUpvalueApi
-
-  protected trait TypeApi extends super.TypeApi { this: Type =>
+  protected trait TypeApi extends super.TypeApi {
+    this: Type =>
     @inject
     def TensorUpvalue: Operator1[Tensor, Identifier with TensorUpvalue]
-//    @inject def Upvalue0: Operator0[Identifier with Upvalue]
   }
 
   /** @template */
   type Type <: (Expression with Any) with TypeApi
 
   // The scalar data type is hard-coded Float at the moment. FIXME: Allow other types in the future
-
   trait PendingBuffer {
     def event: Event
-    def buffer: DeviceBuffer[Float]
 
-    /** A matrix that describes the transformation of coordinate.
-      *
-      * The matrix size is ([[Tensor.shape]].length + 1) × [[Tensor.shape]].length
-      */
-    def matrix: RealMatrix
+    def buffer: DeviceBuffer[Float]
   }
 
-  sealed trait Tensor { thisTensor =>
+  sealed trait Tensor {
+    thisTensor =>
     def debuggingInformation: Implicitly[DebuggingInformation]
 
     def shape: Seq[Int]
 
     def kernelTerm: ValueTerm
+
     def computationalGraph: Do[PendingBuffer]
 
     def force: SharedTensor
   }
 
   trait Compiled extends MonadicCloseable[UnitContinuation] {
-    def run(parameters: Seq[Upvalue]): Do[PendingBuffer]
+    def run(parameters: List[TensorUpvalue]): Do[PendingBuffer]
   }
 
   protected def kernelCacheBuilder: CacheBuilder[StructuralKey, Compiled] = {
@@ -204,12 +200,13 @@ trait Tensors extends OpenCL with AllOpenCLExpressions {
     * @see [[force]] to create a tensor that will cache the result.
     */
   trait InlineTensor extends Tensor {
-    def force: SharedTensor =
+    lazy val force: SharedTensor = {
       new {
         val debuggingInformation: Implicitly[DebuggingInformation] = InlineTensor.this.debuggingInformation
         val shape: Seq[Int] = InlineTensor.this.shape
         val computationalGraph: Do[PendingBuffer] = InlineTensor.this.computationalGraph.shared
       } with SharedTensor
+    }
 
     // TODO: Cache the compiled OpenCL kernel
     // TODO: When comparing
@@ -232,13 +229,32 @@ trait Tensors extends OpenCL with AllOpenCLExpressions {
 
               def monadicClose: UnitContinuation[Unit] = program.monadicClose
 
-              def run(upvalues: Seq[Upvalue]): Do[PendingBuffer] = {
-                val kernel = program.createFirstKernel()
-                for ((upvalue, i) <- upvalues.view.zipWithIndex) {
-                  upvalue.bindUpvalue(kernel, i)
+              def run(upvalues: List[TensorUpvalue]): Do[PendingBuffer] = {
+                // TODO: Manage life cycle of upvalues more delicately
+                // e.g. a buffer should be release as soon as possible if it is a dependency of another buffer,
+                // e.g. however, it can be hold longer time if it is dependencies of many other buffers.
+                upvalues.traverse(_.tensor.computationalGraph).intransitiveFlatMap {
+                  arguments: List[PendingBuffer] =>
+                    Do.monadicCloseable(program.createFirstKernel()).intransitiveFlatMap { kernel: Kernel =>
+                      allocateBuffer[Float](shape.product).flatMap { outputBuffer =>
+                        for ((arugment, i) <- arguments.view.zipWithIndex) {
+                          kernel(i) = arugment.buffer
+                        }
+                        kernel(arguments.length) = outputBuffer
+
+                        kernel.enqueue(shape.view.map(_.toLong): _*).map { event0 =>
+                          new PendingBuffer {
+                            def event: Event = event0
+
+                            def buffer: DeviceBuffer[Float] = outputBuffer
+                          }
+
+                        }
+
+                      }
+                    }
                 }
 
-                ???
               }
             }
           }
@@ -247,6 +263,20 @@ trait Tensors extends OpenCL with AllOpenCLExpressions {
 
       kernelProgram.run(kernelTerm.upvalues)
     }
+  }
+
+  trait TransformedTensor extends InlineTensor {
+
+    def checkpoint: Tensor
+
+    /** A matrix that describes the transformation of coordinate.
+      *
+      * The matrix size is __number of dimensions of original tensor × number of dimensions of new tensor__.
+      */
+    def matrix: RealMatrix
+
+    // TODO: Add the transform operator in Expressions.scala
+    val kernelTerm: ValueTerm = ???
   }
 
   trait SharedTensor extends Tensor {
@@ -262,35 +292,41 @@ trait Tensors extends OpenCL with AllOpenCLExpressions {
 
   }
 
-  def translate(originalTensor: Tensor, offset: Seq[Double])(
-      implicit debuggingInformation0: Implicitly[DebuggingInformation]): Tensor =
-    new {
-      val debuggingInformation = debuggingInformation0
-      val shape: Seq[Int] = originalTensor.shape
-    } with SharedTensor {
-      def computationalGraph: Do[PendingBuffer] = {
-        originalTensor.computationalGraph.map { originalPendingBuffer =>
-          new PendingBuffer {
-            def matrix: RealMatrix = {
-              val matrixArray = (for (columnIndex <- (0 to shape.length).view) yield {
-                (for (rowIndex <- (0 to shape.length).view) yield {
-                  if (columnIndex == shape.length) {
-                    originalPendingBuffer.matrix.getEntry(columnIndex, rowIndex) + offset(rowIndex)
-                  } else {
-                    originalPendingBuffer.matrix.getEntry(columnIndex, rowIndex)
-                  }
-                }).toArray
-              }).toArray
-              val copyArray = false
-              new Array2DRowRealMatrix(matrixArray, copyArray)
+  def translate(previousTensor: Tensor, offset: Seq[Double])(
+      implicit debuggingInformation0: Implicitly[DebuggingInformation]): Tensor = {
+    if (offset.length != previousTensor.shape.length) {
+      throw new IllegalArgumentException
+    }
+
+    previousTensor match {
+      case previousTensor: TransformedTensor =>
+        new TransformedTensor {
+          val matrix: RealMatrix = {
+            val newMatrix = previousTensor.matrix.copy()
+            for (i <- offset.indices) {
+              newMatrix.addToEntry(i, newMatrix.getColumnDimension - 1, offset(i))
             }
-
-            val buffer: DeviceBuffer[Float] = originalPendingBuffer.buffer
-
-            val event: Event = originalPendingBuffer.event
+            newMatrix
+          }
+          val checkpoint: Tensor = previousTensor.checkpoint
+          val shape: Seq[Int] = previousTensor.shape
+          val debuggingInformation: Implicitly[DebuggingInformation] = debuggingInformation0
+        }
+      case _ =>
+        new TransformedTensor {
+          val checkpoint: Tensor = previousTensor
+          val shape: Seq[Int] = checkpoint.shape
+          val debuggingInformation: Implicitly[DebuggingInformation] = debuggingInformation0
+          val matrix: RealMatrix = {
+            val newMatrix = MatrixUtils.createRealMatrix(shape.length, shape.length + 1)
+            for (i <- offset.indices) {
+              newMatrix.setEntry(i, i, 1.0)
+              newMatrix.setEntry(i, newMatrix.getColumnDimension - 1, offset(i))
+            }
+            newMatrix
           }
         }
-      }
     }
+  }
 
 }
