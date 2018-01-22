@@ -14,6 +14,7 @@ import com.thoughtworks.raii.covariant._
 import com.thoughtworks.tryt.covariant._
 import org.apache.commons.math3.linear._
 
+import scala.concurrent.ExecutionContext
 import scala.language.existentials
 import scalaz.std.list._
 import scalaz.syntax.all._
@@ -162,9 +163,8 @@ trait Tensors extends OpenCL with AllOpenCLExpressions {
 
     def kernelTerm: ValueTerm
 
-    def computationalGraph: Do[PendingBuffer]
+    def fill: Do[PendingBuffer]
 
-    def force: SharedTensor
   }
 
   trait CompiledKernel extends MonadicCloseable[UnitContinuation] {
@@ -177,21 +177,22 @@ trait Tensors extends OpenCL with AllOpenCLExpressions {
       .removalListener(new RemovalListener[StructuralKey, CompiledKernel] {
         def onRemoval(notification: RemovalNotification[StructuralKey, CompiledKernel]): Unit = {
           val compiledKernel = notification.getValue
-          compiledKernel.monadicClose.blockingAwait
-          // TODO: clean up the kernel
-          // kernelProgram.close()
-
+          compiledKernel.monadicClose.reset
         }
       })
   }
 
   protected val kernelCache: Cache[StructuralKey, CompiledKernel] = kernelCacheBuilder.build()
 
+  protected implicit val executionContext: ExecutionContext
+
+  private def clearCache: UnitContinuation[Unit] = UnitContinuation.execute {
+    kernelCache.invalidateAll()
+    kernelCache.cleanUp()
+  }
+
   override def monadicClose: UnitContinuation[Unit] = {
-    UnitContinuation.delay {
-      kernelCache.invalidateAll()
-      kernelCache.cleanUp()
-    } >> super.monadicClose
+    clearCache >> super.monadicClose
   }
 
   /** An intermediate expression of tensor that can be composed into a more complex expression.
@@ -201,15 +202,15 @@ trait Tensors extends OpenCL with AllOpenCLExpressions {
     * @see [[force]] to create a tensor that will cache the result.
     */
   trait InlineTensor extends Tensor {
-    lazy val force: SharedTensor = {
+    def force: BufferedTensor = {
       new {
         val debuggingInformation: Implicitly[DebuggingInformation] = InlineTensor.this.debuggingInformation
         val shape: Seq[Int] = InlineTensor.this.shape
-        val computationalGraph: Do[PendingBuffer] = InlineTensor.this.computationalGraph.shared
-      } with SharedTensor
+        val fill: Do[PendingBuffer] = InlineTensor.this.fill
+      } with BufferedTensor
     }
 
-    def computationalGraph: Do[PendingBuffer] = {
+    lazy val fill: Do[PendingBuffer] = {
       val compiledKernel = kernelCache.get(
         new StructuralKey(kernelTerm),
         new Callable[CompiledKernel] {
@@ -232,7 +233,7 @@ trait Tensors extends OpenCL with AllOpenCLExpressions {
                 // TODO: Manage life cycle of upvalues more delicately
                 // e.g. a buffer should be release as soon as possible if it is a dependency of another buffer,
                 // e.g. however, it can be hold longer time if it is dependencies of many other buffers.
-                upvalues.traverse(_.tensor.computationalGraph).intransitiveFlatMap {
+                upvalues.traverse(_.tensor.fill).intransitiveFlatMap {
                   arguments: List[PendingBuffer] =>
                     Do.monadicCloseable(program.createFirstKernel()).intransitiveFlatMap { kernel: Kernel =>
                       allocateBuffer[Float](shape.product).flatMap { outputBuffer =>
@@ -278,7 +279,7 @@ trait Tensors extends OpenCL with AllOpenCLExpressions {
     val kernelTerm: ValueTerm = ???
   }
 
-  trait SharedTensor extends Tensor {
+  trait BufferedTensor extends Tensor {
 
     val kernelTerm: ValueTerm = {
       val `type`: ArrayBufferType { type ElementType = float.type } =
@@ -286,8 +287,6 @@ trait Tensors extends OpenCL with AllOpenCLExpressions {
       val id: `type`.TypedTerm = `type`.TensorUpvalue(this)(debuggingInformation)
       id.extract(debuggingInformation)
     }
-
-    def force: this.type = this
 
   }
 

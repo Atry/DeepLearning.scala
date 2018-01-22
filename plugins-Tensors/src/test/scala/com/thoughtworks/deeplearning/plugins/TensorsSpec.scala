@@ -16,7 +16,8 @@ import scala.language.existentials
   */
 class TensorsSpec {
   private val hyperparameters =
-    Factory[OpenCL.UseAllDevices with OpenCL.UseFirstPlatform with OpenCL.CommandQueuePool with Tensors with AllOpenCLExpressions]
+    Factory[
+      OpenCL.GlobalExecutionContext with OpenCL.UseAllDevices with OpenCL.UseFirstPlatform with OpenCL.CommandQueuePool with Tensors with AllOpenCLExpressions]
       .newInstance(
         handleOpenCLNotification = handleOpenCLNotification,
         numberOfCommandQueuesForDevice = { (deviceId: Long, capabilities: CLCapabilities) =>
