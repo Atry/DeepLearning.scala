@@ -176,7 +176,8 @@ trait Tensors extends OpenCL with AllOpenCLExpressions {
       .newBuilder()
       .removalListener(new RemovalListener[StructuralKey, CompiledKernel] {
         def onRemoval(notification: RemovalNotification[StructuralKey, CompiledKernel]): Unit = {
-          val kernelProgram = notification.getValue
+          val compiledKernel = notification.getValue
+          compiledKernel.monadicClose.blockingAwait
           // TODO: clean up the kernel
           // kernelProgram.close()
 
