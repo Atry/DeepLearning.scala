@@ -32,15 +32,17 @@ trait Tensors extends OpenCL {
 
     type Category = Floats with Arrays
 
-//    protected trait UpvalueApi extends TermApi { this: Upvalue =>
-//      val tensor: Tensor
-//    }
-//
-//    type Upvalue <: (Term with Any) with UpvalueApi
-
     protected trait TermApi extends super.TermApi {
       this: Term =>
-      def upvalues: List[Term] = ???
+      lazy val upvalues: List[Parameter] = {
+//        tree match {
+//          case parameter:Parameter =>
+//            List(this)
+//          case
+//        }
+//
+        ???
+      }
 
     }
 
@@ -121,7 +123,7 @@ trait Tensors extends OpenCL {
   }
 
   trait CompiledKernel extends MonadicCloseable[UnitContinuation] {
-    def run(parameters: List[Term]): Do[PendingBuffer]
+    def run(parameters: List[Parameter]): Do[PendingBuffer]
   }
 
   protected def kernelCacheBuilder: CacheBuilder[ValueTerm, CompiledKernel] = {
@@ -179,7 +181,7 @@ trait Tensors extends OpenCL {
               val exportContext = new ExportContext
               val kernelBody = convertedTerm.tree.export(functionContext, exportContext)
 
-              val kernelParameters = closure.upvalues.map { upvalue =>
+              val kernelParameters = closure.upvalues.map { upvalue: Parameter =>
                 exportContext.get(alphConversionContext.get(upvalue)).asInstanceOf[functionContext.Term]
               }
               fastraw"""
@@ -196,13 +198,13 @@ trait Tensors extends OpenCL {
 
               def monadicClose: UnitContinuation[Unit] = program.monadicClose
 
-              def run(upvalues: List[Term]): Do[PendingBuffer] = {
+              def run(upvalues: List[Parameter]): Do[PendingBuffer] = {
                 // TODO: Manage life cycle of upvalues more delicately
                 // e.g. a buffer should be release as soon as possible if it is a dependency of another buffer,
                 // e.g. however, it can be hold longer time if it is dependencies of many other buffers.
                 upvalues
-                  .traverse { term =>
-                    term.tree.asInstanceOf[Parameter].id.asInstanceOf[Tensor].enqueue
+                  .traverse { tree =>
+                    tree.asInstanceOf[Parameter].id.asInstanceOf[Tensor].enqueue
                   }
                   .intransitiveFlatMap {
                     arguments: List[PendingBuffer] =>
