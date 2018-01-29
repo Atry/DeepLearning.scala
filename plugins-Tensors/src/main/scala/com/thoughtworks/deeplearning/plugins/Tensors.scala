@@ -1,8 +1,11 @@
 package com.thoughtworks.deeplearning.plugins
 
+import java.util.IdentityHashMap
+import java.util.Collections
 import java.util.concurrent.Callable
 
 import com.google.common.cache._
+import com.google.common.collect.Sets
 import com.thoughtworks.compute.OpenCL
 import com.thoughtworks.continuation._
 import com.thoughtworks.expressions.api.{Arrays, Floats}
@@ -10,6 +13,8 @@ import com.thoughtworks.expressions.opencl.Context
 import com.thoughtworks.expressions.opencl.Context.GlobalContext
 import com.thoughtworks.expressions.tree.{FloatArrayTrees, StructuralTrees}
 import com.thoughtworks.feature.Factory
+
+import scala.annotation.tailrec
 //import com.thoughtworks.expressions.Anonymous.Implicitly
 //import com.thoughtworks.expressions.Builtins.AllOpenCLExpressions
 //import com.thoughtworks.expressions.OpenCLValues
@@ -17,40 +22,53 @@ import com.thoughtworks.feature.Factory.inject
 import com.thoughtworks.raii.asynchronous._
 import com.thoughtworks.raii.covariant._
 import com.thoughtworks.tryt.covariant._
+import com.thoughtworks.future._
 import org.apache.commons.math3.linear._
 
 import scala.concurrent.ExecutionContext
 import scala.language.existentials
+import scalaz.Applicative
 import scalaz.std.list._
 import scalaz.syntax.all._
-import scala.util.Try
+import scalaz.syntax.tag._
+import scalaz.Tags.Parallel
 import com.dongxiguo.fastring.Fastring.Implicits._
 
 // TODO: Rename to VirtualTensors, like virtual-dom
 trait Tensors extends OpenCL {
-  trait Closures extends FloatArrayTrees with StructuralTrees {
 
-    type Category = Floats with Arrays
+  val trees: FloatArrayTrees with StructuralTrees { type Category = Floats with Arrays } =
+    Factory[FloatArrayTrees with StructuralTrees].newInstance()
+  import trees._
 
-    protected trait TermApi extends super.TermApi {
-      this: Term =>
-      lazy val upvalues: List[Parameter] = {
-//        tree match {
-//          case parameter:Parameter =>
-//            List(this)
-//          case
-//        }
-//
-        ???
+  def upvalues(tree: TreeApi): List[Parameter] = {
+    val traversed: java.util.Set[TreeApi] = Collections.newSetFromMap(new IdentityHashMap)
+    val builder = List.newBuilder[Parameter]
+    def buildParameterList(tree: TreeApi): Unit = {
+      tree match {
+        case tree: Parameter =>
+          builder += tree
+        case _ =>
+          val productArity = tree.productArity
+          @tailrec def loop(i: Int): Unit = {
+            if (i < productArity) {
+              tree.productElement(i) match {
+                case child: TreeApi =>
+                  val isNew = traversed.add(tree)
+                  if (isNew) {
+                    buildParameterList(child)
+                  }
+                case _ =>
+              }
+              loop(i + 1)
+            }
+          }
       }
 
     }
-
-    type Term <: TermApi
+    buildParameterList(tree)
+    builder.result()
   }
-
-  val trees: Closures = Factory[Closures].newInstance()
-  import trees._
 
 //  final class StructuralKey(val term: Term) {
 //
@@ -181,7 +199,7 @@ trait Tensors extends OpenCL {
               val exportContext = new ExportContext
               val kernelBody = convertedTerm.tree.export(functionContext, exportContext)
 
-              val kernelParameters = closure.upvalues.map { upvalue: Parameter =>
+              val kernelParameters = upvalues(closure.tree).map { upvalue: Parameter =>
                 exportContext.get(alphConversionContext.get(upvalue)).asInstanceOf[functionContext.Term]
               }
               fastraw"""
@@ -202,10 +220,12 @@ trait Tensors extends OpenCL {
                 // TODO: Manage life cycle of upvalues more delicately
                 // e.g. a buffer should be release as soon as possible if it is a dependency of another buffer,
                 // e.g. however, it can be hold longer time if it is dependencies of many other buffers.
+
                 upvalues
-                  .traverse { tree =>
-                    tree.asInstanceOf[Parameter].id.asInstanceOf[Tensor].enqueue
+                  .traverse[ParallelDo, PendingBuffer] { tree =>
+                    Parallel(tree.asInstanceOf[Parameter].id.asInstanceOf[Tensor].enqueue)
                   }
+                  .unwrap
                   .intransitiveFlatMap {
                     arguments: List[PendingBuffer] =>
                       Do.monadicCloseable(program.createFirstKernel()).intransitiveFlatMap { kernel: Kernel =>
@@ -214,16 +234,12 @@ trait Tensors extends OpenCL {
                             kernel(i) = arugment.buffer
                           }
                           kernel(arguments.length) = outputBuffer
-
                           kernel.enqueue(shape.view.map(_.toLong): _*).map { event0 =>
                             new PendingBuffer {
-                              def event: Event = event0
-
-                              def buffer: DeviceBuffer[Float] = outputBuffer
+                              val event: Event = event0
+                              val buffer: DeviceBuffer[Float] = outputBuffer
                             }
-
                           }
-
                         }
                       }
                   }
@@ -236,7 +252,7 @@ trait Tensors extends OpenCL {
         }
       )
 
-      compiledKernel.run(closure.upvalues).shared
+      compiledKernel.run(upvalues(closure.tree)).shared
     }
   }
 
