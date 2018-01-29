@@ -5,8 +5,7 @@ import java.nio.ByteBuffer
 import com.thoughtworks.compute.{Memory, OpenCL}
 import com.thoughtworks.feature.Factory
 import TensorsSpec._
-import com.thoughtworks.expressions.Builtins.AllOpenCLExpressions
-import com.thoughtworks.raii.asynchronous.Do
+import com.thoughtworks.raii.asynchronous._
 import org.lwjgl.opencl.CLCapabilities
 
 import scala.language.existentials
@@ -17,7 +16,7 @@ import scala.language.existentials
 class TensorsSpec {
   private val hyperparameters =
     Factory[
-      OpenCL.GlobalExecutionContext with OpenCL.UseAllDevices with OpenCL.UseFirstPlatform with OpenCL.CommandQueuePool with Tensors with AllOpenCLExpressions]
+      OpenCL.GlobalExecutionContext with OpenCL.UseAllDevices with OpenCL.UseFirstPlatform with OpenCL.CommandQueuePool with Tensors]
       .newInstance(
         handleOpenCLNotification = handleOpenCLNotification,
         numberOfCommandQueuesForDevice = { (deviceId: Long, capabilities: CLCapabilities) =>

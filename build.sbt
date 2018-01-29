@@ -119,6 +119,7 @@ lazy val `plugins-OpenCLBuffers` =
     `plugins-Logging`,
     `plugins-Names`,
     ProjectRef(file("Expressions.scala"), "Expressions"),
+    ProjectRef(file("Compute.scala"), "OpenCLCodeGenerator"),
     ProjectRef(file("Compute.scala"), "OpenCL")
   )
 
