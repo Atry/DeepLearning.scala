@@ -266,8 +266,9 @@ trait Tensors extends OpenCL {
       */
     def matrix: RealMatrix
 
-    // TODO: Add the transform operator in Expressions.scala
-    val closure: ValueTerm = ???
+    val closure: ValueTerm = {
+      array.parameter(checkpoint, float, shape: _*).transform(matrix).extract
+    }
   }
 
   trait BufferedTensor extends Tensor {
